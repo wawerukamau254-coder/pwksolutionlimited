@@ -1,0 +1,70 @@
+# Base44 sandbox environment for the PWK Solutions website.
+#
+# Runs the app from the cloned source (bind mount + `next dev`) so edits appear
+# in the preview without rebuilding an image. Postgres backs the contact form.
+#
+#   docker compose -f docker-compose.base44.yml up -d --build
+#
+name: pwk-solutions
+
+services:
+  db:
+    image: postgres:16
+    restart: on-failure
+    environment:
+      POSTGRES_DB: pwk
+      POSTGRES_USER: pwk
+      # Local development database only — never used outside this sandbox.
+      POSTGRES_PASSWORD: pwk_local_dev
+    volumes:
+      - pwk-db-data:/var/lib/postgresql/data
+      # Applied only when the data volume is first initialised.
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pwk -d pwk -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    labels:
+      base44.project: "PWK Solutions database"
+      base44.kind: "infra"
+
+  web:
+    image: node:22
+    restart: on-failure
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://pwk:pwk_local_dev@db:5432/pwk
+      - NEXT_TELEMETRY_DISABLED=1
+      # Bind mounts do not always emit inotify events; poll so hot reload works.
+      - WATCHPACK_POLLING=true
+      - CHOKIDAR_USEPOLLING=true
+      # Passed through by the platform; gates the preview origin in next.config.ts.
+      - BASE44_PREVIEW_MODE
+      - BASE44_PUBLIC_HOST_SUFFIX
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+    command:
+      - sh
+      - -ec
+      - npm ci --no-audit --no-fund && exec npm run dev
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 10s
+      timeout: 6s
+      retries: 10
+      start_period: 120s
+    labels:
+      base44.project: "PWK Solutions Website"
+      base44.kind: "web"
+      base44.port: "3000"
+
+volumes:
+  pwk-db-data:
